@@ -11,6 +11,7 @@ import (
 
 	"github.com/Black-Mamba24/pdf-split/internal/domain"
 	"github.com/Black-Mamba24/pdf-split/internal/pdf"
+	"github.com/Black-Mamba24/pdf-split/internal/progress"
 	"github.com/Black-Mamba24/pdf-split/internal/verify"
 )
 
@@ -65,6 +66,44 @@ func TestRunCombinedUsesAtLeastRequestedParts(t *testing.T) {
 	}
 	if len(matches) < 4 {
 		t.Fatalf("generated %d files, want at least 4", len(matches))
+	}
+}
+
+func TestRunMaxSizeUsesMeasuredPageSizesAndPublishesToOutputDir(t *testing.T) {
+	engine := newFakeEngine(5, 0)
+	engine.weights = []int64{40, 40, 20, 80, 10}
+	outputDir := t.TempDir()
+
+	err := Run(context.Background(), Options{Input: "input.pdf", MaxSize: 100, OutputDir: outputDir}, testDependencies(engine))
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	matches, err := filepath.Glob(filepath.Join(outputDir, "input-*.pdf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 2 {
+		t.Fatalf("generated %d files, want 2", len(matches))
+	}
+	if !containsRange(engine.publishedRanges(), domain.PageRange{Start: 1, End: 3}) ||
+		!containsRange(engine.publishedRanges(), domain.PageRange{Start: 4, End: 5}) {
+		t.Fatalf("published ranges = %#v, want measured max-size ranges", engine.publishedRanges())
+	}
+}
+
+func TestRunMaxSizeReportsScanningProgress(t *testing.T) {
+	engine := newFakeEngine(3, 10)
+	var stderr bytes.Buffer
+	deps := testDependencies(engine)
+	deps.NewReporter = func(bool) progress.Reporter { return progress.NewWithTerminal(&stderr, true, false) }
+
+	err := Run(context.Background(), Options{Input: "input.pdf", MaxSize: 100, OutputDir: t.TempDir()}, deps)
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !strings.Contains(stderr.String(), "Scanning PDF pages: 3/3 measured") {
+		t.Fatalf("stderr = %q, want scanning progress", stderr.String())
 	}
 }
 
@@ -211,6 +250,17 @@ func (e *fakeEngine) WriteRange(_ string, outputPath string, pageRange domain.Pa
 	}
 	e.outputs[outputPath] = pageRange
 	return nil
+}
+
+func (e *fakeEngine) publishedRanges() []domain.PageRange {
+	var ranges []domain.PageRange
+	for path, pageRange := range e.outputs {
+		if strings.Contains(path, "pdf-split-measure-") {
+			continue
+		}
+		ranges = append(ranges, pageRange)
+	}
+	return ranges
 }
 
 func containsRange(ranges []domain.PageRange, target domain.PageRange) bool {

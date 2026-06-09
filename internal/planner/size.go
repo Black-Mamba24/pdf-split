@@ -33,6 +33,7 @@ type sizePlanner struct {
 	measurer        RangeMeasurer
 	opts            SizeOptions
 	measurements    int
+	singleSizes     []int64
 	budgetExhausted bool
 }
 
@@ -54,6 +55,9 @@ func ByMaxSize(ctx context.Context, totalPages int, measurer RangeMeasurer, opts
 	}
 
 	planner := sizePlanner{ctx: ctx, totalPages: totalPages, measurer: measurer, opts: opts}
+	if err := planner.measureSinglePages(); err != nil {
+		return SizeResult{}, err
+	}
 	result, err := planner.greedyPlan()
 	if err != nil {
 		return result, err
@@ -66,7 +70,33 @@ func ByMaxSize(ctx context.Context, totalPages int, measurer RangeMeasurer, opts
 	if planner.budgetExhausted {
 		return result, ErrMeasurementBudget
 	}
-	return result, nil
+	return planner.mergeAdjacentRanges(result), nil
+}
+
+func (p *sizePlanner) mergeAdjacentRanges(result SizeResult) SizeResult {
+	for i := 0; len(result.Plan.Ranges) > p.opts.MinimumParts && i < len(result.Plan.Ranges)-1; {
+		candidate := domain.PageRange{Start: result.Plan.Ranges[i].Start, End: result.Plan.Ranges[i+1].End}
+		size, err := p.measure(candidate)
+		if err != nil || size > p.opts.MaxBytes {
+			i++
+			continue
+		}
+		result.Plan.Ranges = replaceRangeWithOne(result.Plan.Ranges, i, candidate)
+		result.Sizes = replaceSizeWithOne(result.Sizes, i, size)
+	}
+	return result
+}
+
+func (p *sizePlanner) measureSinglePages() error {
+	p.singleSizes = make([]int64, p.totalPages+1)
+	for page := 1; page <= p.totalPages; page++ {
+		size, err := p.measure(domain.PageRange{Start: page, End: page})
+		if err != nil {
+			return err
+		}
+		p.singleSizes[page] = size
+	}
+	return nil
 }
 
 func (p *sizePlanner) greedyPlan() (SizeResult, error) {
@@ -96,51 +126,41 @@ func (p *sizePlanner) greedyPlan() (SizeResult, error) {
 
 func (p *sizePlanner) largestRangeFrom(start int) (domain.PageRange, int64, bool, error) {
 	single := domain.PageRange{Start: start, End: start}
-	singleSize, err := p.measure(single)
-	if err != nil {
-		return domain.PageRange{}, 0, false, err
-	}
+	singleSize := p.singleSizes[start]
 	if start == p.totalPages || singleSize > p.opts.MaxBytes {
 		return single, singleSize, singleSize > p.opts.MaxBytes, nil
 	}
 
-	low, lowSize := start, singleSize
-	high := start
-	step := 1
-	for high < p.totalPages {
-		next := high + step
-		if next > p.totalPages {
-			next = p.totalPages
-		}
-		size, err := p.measure(domain.PageRange{Start: start, End: next})
-		if err != nil {
-			return domain.PageRange{}, 0, false, err
-		}
-		if size <= p.opts.MaxBytes {
-			low, lowSize = next, size
-			if next == p.totalPages {
-				return domain.PageRange{Start: start, End: low}, lowSize, false, nil
-			}
-			high = next
-			step *= 2
-			continue
-		}
-		high = next
-		break
+	candidateEnd := p.pageSizeCandidateEnd(start)
+	candidateSize, err := p.measure(domain.PageRange{Start: start, End: candidateEnd})
+	if err != nil {
+		return domain.PageRange{}, 0, false, err
 	}
 
-	left, right := low+1, high-1
-	for left <= right {
-		mid := left + (right-left)/2
-		size, err := p.measure(domain.PageRange{Start: start, End: mid})
-		if err != nil {
-			return domain.PageRange{}, 0, false, err
+	low, lowSize := start, singleSize
+	if candidateSize <= p.opts.MaxBytes {
+		low, lowSize = candidateEnd, candidateSize
+		for low < p.totalPages {
+			next := low + 1
+			size, err := p.measure(domain.PageRange{Start: start, End: next})
+			if err != nil {
+				return domain.PageRange{}, 0, false, err
+			}
+			if size > p.opts.MaxBytes {
+				break
+			}
+			low, lowSize = next, size
 		}
-		if size <= p.opts.MaxBytes {
-			low, lowSize = mid, size
-			left = mid + 1
-		} else {
-			right = mid - 1
+	} else {
+		for end := candidateEnd - 1; end > start; end-- {
+			size, err := p.measure(domain.PageRange{Start: start, End: end})
+			if err != nil {
+				return domain.PageRange{}, 0, false, err
+			}
+			if size <= p.opts.MaxBytes {
+				low, lowSize = end, size
+				break
+			}
 		}
 	}
 
@@ -149,6 +169,19 @@ func (p *sizePlanner) largestRangeFrom(start int) (domain.PageRange, int64, bool
 		return domain.PageRange{}, 0, false, err
 	}
 	return domain.PageRange{Start: start, End: low}, lowSize, false, nil
+}
+
+func (p *sizePlanner) pageSizeCandidateEnd(start int) int {
+	end := start
+	var size int64
+	for page := start; page <= p.totalPages; page++ {
+		if page > start && size+p.singleSizes[page] > p.opts.MaxBytes {
+			break
+		}
+		size += p.singleSizes[page]
+		end = page
+	}
+	return end
 }
 
 func (p *sizePlanner) linearScanBest(start, currentEnd int, currentSize int64) (int, int64, error) {
@@ -251,10 +284,26 @@ func replaceRange(ranges []domain.PageRange, index int, left, right domain.PageR
 	return replaced
 }
 
+func replaceRangeWithOne(ranges []domain.PageRange, index int, pageRange domain.PageRange) []domain.PageRange {
+	replaced := make([]domain.PageRange, 0, len(ranges)-1)
+	replaced = append(replaced, ranges[:index]...)
+	replaced = append(replaced, pageRange)
+	replaced = append(replaced, ranges[index+2:]...)
+	return replaced
+}
+
 func replaceSize(sizes []int64, index int, left, right int64) []int64 {
 	replaced := make([]int64, 0, len(sizes)+1)
 	replaced = append(replaced, sizes[:index]...)
 	replaced = append(replaced, left, right)
 	replaced = append(replaced, sizes[index+1:]...)
+	return replaced
+}
+
+func replaceSizeWithOne(sizes []int64, index int, size int64) []int64 {
+	replaced := make([]int64, 0, len(sizes)-1)
+	replaced = append(replaced, sizes[:index]...)
+	replaced = append(replaced, size)
+	replaced = append(replaced, sizes[index+2:]...)
 	return replaced
 }

@@ -11,6 +11,10 @@ import (
 
 func TestByMaxSizeFitsAllPagesInOneOutput(t *testing.T) {
 	measurer := fakeRangeMeasurer{sizes: map[domain.PageRange]int64{
+		{Start: 1, End: 1}: 20,
+		{Start: 2, End: 2}: 20,
+		{Start: 3, End: 3}: 20,
+		{Start: 4, End: 4}: 20,
 		{Start: 1, End: 4}: 90,
 	}}
 
@@ -39,6 +43,27 @@ func TestByMaxSizeGreedyBoundarySearchProducesContinuousRanges(t *testing.T) {
 		{Start: 10, End: 10},
 	})
 	assertSizes(t, result.Sizes, []int64{30, 30, 30, 10})
+}
+
+func TestByMaxSizeUsesSinglePageSizesToChooseBoundary(t *testing.T) {
+	measurer := fakeRangeMeasurer{sizes: map[domain.PageRange]int64{
+		{Start: 1, End: 1}: 40,
+		{Start: 2, End: 2}: 40,
+		{Start: 3, End: 3}: 20,
+		{Start: 4, End: 4}: 80,
+		{Start: 1, End: 2}: 80,
+		{Start: 1, End: 3}: 100,
+		{Start: 1, End: 4}: 180,
+	}}
+
+	result, err := ByMaxSize(context.Background(), 4, measurer, SizeOptions{MaxBytes: 100, LinearScan: 1})
+	if err != nil {
+		t.Fatalf("ByMaxSize() error = %v", err)
+	}
+	assertPlan(t, result.Plan, 4, []domain.PageRange{
+		{Start: 1, End: 3},
+		{Start: 4, End: 4},
+	})
 }
 
 func TestByMaxSizeRecordsOversizedSinglePage(t *testing.T) {
@@ -99,7 +124,7 @@ func TestByMaxSizeBudgetExhaustionAfterValidPlanReturnsBestPlan(t *testing.T) {
 		MaxBytes:        100,
 		MinimumParts:    3,
 		LinearScan:      4,
-		MaxMeasurements: 4,
+		MaxMeasurements: 11,
 	})
 	if !errors.Is(err, ErrMeasurementBudget) {
 		t.Fatalf("ByMaxSize() error = %v, want ErrMeasurementBudget", err)

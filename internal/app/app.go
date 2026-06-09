@@ -205,44 +205,43 @@ func appendUniqueRange(ranges []domain.PageRange, target domain.PageRange) []dom
 
 func createPlan(ctx context.Context, opts Options, totalPages int, engine pdf.Engine, reporter progress.Reporter) (domain.SplitPlan, []int64, []domain.PageRange, error) {
 	reporter.Planning(0)
-	if opts.MaxSize > 0 {
-		inputBytes, err := depsInputSize(engine, opts.Input)
-		if err != nil {
-			return domain.SplitPlan{}, nil, nil, fmt.Errorf("stat input PDF %q: %w", opts.Input, err)
-		}
-		plan, err := planner.ByEstimatedMaxSize(totalPages, inputBytes, opts.MaxSize, opts.Parts)
-		return plan, nil, nil, err
-	}
-
 	tempDir, err := os.MkdirTemp("", "pdf-split-measure-*")
 	if err != nil {
 		return domain.SplitPlan{}, nil, nil, err
 	}
 	defer os.RemoveAll(tempDir)
 	measurer := measure.NewWithProgress(engine, opts.Input, tempDir, 512, func(event measure.ProgressEvent) {
+		if opts.MaxSize > 0 && event.Range.Pages() == 1 {
+			if event.Done {
+				reporter.ScanningPages(event.Range.End, totalPages)
+			}
+			return
+		}
 		if event.Done {
 			reporter.Planning(event.Completed)
 			return
 		}
 		reporter.PlanningRange(event.Range, event.Completed)
 	})
+	if opts.MaxSize > 0 {
+		result, err := planner.ByMaxSize(ctx, totalPages, measurer, planner.SizeOptions{
+			MaxBytes:        opts.MaxSize,
+			MinimumParts:    opts.Parts,
+			LinearScan:      8,
+			MaxMeasurements: maxSizeMeasurementBudget(totalPages),
+		})
+		if err != nil && !(errors.Is(err, planner.ErrMeasurementBudget) && result.Plan.Validate(totalPages) == nil) {
+			return result.Plan, result.Sizes, result.OversizedSingles, err
+		}
+		return result.Plan, result.Sizes, result.OversizedSingles, nil
+	}
+
 	result, err := planner.ByBalancedParts(ctx, totalPages, opts.Parts, measurer, 64)
 	return result.Plan, result.Sizes, nil, err
 }
 
-type inputSizer interface {
-	InputSize(path string) (int64, error)
-}
-
-func depsInputSize(engine pdf.Engine, path string) (int64, error) {
-	if sizer, ok := engine.(inputSizer); ok {
-		return sizer.InputSize(path)
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		return 0, err
-	}
-	return info.Size(), nil
+func maxSizeMeasurementBudget(totalPages int) int {
+	return totalPages*16 + 128
 }
 
 func withDefaults(deps Dependencies) Dependencies {
