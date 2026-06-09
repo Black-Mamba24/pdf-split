@@ -15,6 +15,7 @@ import (
 type Reporter interface {
 	Planning(measurements int)
 	PlanningRange(pages domain.PageRange, completed int)
+	ScanningPages(measured, total int)
 	StartFile(index, total int, name string, expectedBytes int64)
 	WatchFile(ctx context.Context, path string, done <-chan struct{})
 	Complete(actualBytes int64)
@@ -66,7 +67,14 @@ func (r *reporter) PlanningRange(pages domain.PageRange, completed int) {
 	if !r.shouldWrite() {
 		return
 	}
-	r.writeDynamic("Planning split boundaries: measuring pages %d-%d... %d completed", pages.Start, pages.End, completed)
+	r.writeDynamic("Planning split boundaries: measuring pages %d-%d...", pages.Start, pages.End)
+}
+
+func (r *reporter) ScanningPages(measured, total int) {
+	if !r.shouldWrite() {
+		return
+	}
+	r.writeDynamic("Scanning PDF pages: %d/%d measured", measured, total)
 }
 
 func (r *reporter) StartFile(index, total int, name string, expectedBytes int64) {
@@ -158,7 +166,7 @@ func (r *reporter) writeDynamic(format string, args ...any) {
 	r.lastDynamic = line
 	r.mu.Unlock()
 	if r.terminal {
-		fmt.Fprintf(r.w, "\r%s", line)
+		fmt.Fprintf(r.w, "\r%s\033[K", line)
 		return
 	}
 	fmt.Fprintln(r.w, line)
@@ -166,7 +174,7 @@ func (r *reporter) writeDynamic(format string, args ...any) {
 
 func (r *reporter) writeRetained(line string) {
 	if r.terminal {
-		fmt.Fprintf(r.w, "\r%s\n", line)
+		fmt.Fprintf(r.w, "\r%s\033[K\n", line)
 		return
 	}
 	fmt.Fprintln(r.w, line)

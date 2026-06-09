@@ -48,8 +48,35 @@ func TestPlanningRangeShowsCurrentCandidate(t *testing.T) {
 	reporter.PlanningRange(domain.PageRange{Start: 12, End: 34}, 7)
 
 	got := stderr.String()
-	if !strings.Contains(got, "measuring pages 12-34") || !strings.Contains(got, "7 completed") {
+	if !strings.Contains(got, "measuring pages 12-34") {
 		t.Fatalf("planning range output = %q", got)
+	}
+	if strings.Contains(got, "7 completed") {
+		t.Fatalf("planning range output = %q, want no completed count", got)
+	}
+}
+
+func TestScanningPagesShowsMeasuredPageCount(t *testing.T) {
+	reporter, stderr := newTestReporter(true)
+
+	reporter.ScanningPages(37, 274)
+
+	got := stderr.String()
+	if !strings.Contains(got, "Scanning PDF pages: 37/274 measured") {
+		t.Fatalf("scanning output = %q", got)
+	}
+}
+
+func TestTerminalProgressClearsLineRemainder(t *testing.T) {
+	reporter, stderr := newTestReporter(true)
+
+	reporter.ScanningPages(1, 10)
+	reporter.StartFile(1, 1, "report-001.pdf", 100)
+	reporter.Complete(10)
+
+	got := stderr.String()
+	if count := strings.Count(got, "\033[K"); count != 3 {
+		t.Fatalf("terminal progress = %q, want 3 clear-line escapes, got %d", got, count)
 	}
 }
 
