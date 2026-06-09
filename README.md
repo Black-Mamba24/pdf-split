@@ -6,10 +6,25 @@ original order.
 
 ## Install
 
-Download an archive for your platform from GitHub Releases, or build locally:
+From a local checkout, install a native executable into `~/.local/bin`:
 
 ```sh
-go install github.com/Black-Mamba24/pdf-split/cmd/pdf-split@latest
+make install
+pdf-split --help
+```
+
+Override the installation directory when needed:
+
+```sh
+make install BINDIR=/usr/local/bin
+```
+
+To install the latest remote version without cloning the repository:
+
+```sh
+mkdir -p "$HOME/.local/bin"
+GOBIN="$HOME/.local/bin" GOARCH="$(go env GOHOSTARCH)" CGO_ENABLED=0 \
+  go install github.com/Black-Mamba24/pdf-split/cmd/pdf-split@latest
 ```
 
 ## Usage
