@@ -1,2 +1,4 @@
 .claude/settings.local.json
 .worktrees/
+/pdf-split
+/pdf-split.exe
