@@ -17,6 +17,12 @@ type Measurer interface {
 	Measurements() int
 }
 
+type ProgressEvent struct {
+	Range     domain.PageRange
+	Completed int
+	Done      bool
+}
+
 type cacheKey struct {
 	input string
 	start int
@@ -34,6 +40,7 @@ type measurer struct {
 	canonicalInput string
 	tempDir        string
 	cacheEntries   int
+	onProgress     func(ProgressEvent)
 
 	mu           sync.Mutex
 	measurements int
@@ -42,6 +49,10 @@ type measurer struct {
 }
 
 func New(engine pdf.Engine, input, tempDir string, cacheEntries int) Measurer {
+	return NewWithProgress(engine, input, tempDir, cacheEntries, nil)
+}
+
+func NewWithProgress(engine pdf.Engine, input, tempDir string, cacheEntries int, onProgress func(ProgressEvent)) Measurer {
 	canonicalInput, err := filepath.Abs(input)
 	if err != nil {
 		canonicalInput = input
@@ -53,6 +64,7 @@ func New(engine pdf.Engine, input, tempDir string, cacheEntries int) Measurer {
 		canonicalInput: canonicalInput,
 		tempDir:        tempDir,
 		cacheEntries:   cacheEntries,
+		onProgress:     onProgress,
 		lru:            list.New(),
 		cache:          make(map[cacheKey]*list.Element),
 	}
@@ -82,7 +94,7 @@ func (m *measurer) Measure(ctx context.Context, pages domain.PageRange) (int64, 
 	}
 	defer os.Remove(candidatePath)
 
-	m.recordMeasurement()
+	m.reportProgress(pages, false)
 	if err := m.engine.WriteRange(m.input, candidatePath, pages); err != nil {
 		return 0, err
 	}
@@ -93,7 +105,16 @@ func (m *measurer) Measure(ctx context.Context, pages domain.PageRange) (int64, 
 	}
 	size := info.Size()
 	m.store(key, size)
+	m.recordMeasurement()
+	m.reportProgress(pages, true)
 	return size, nil
+}
+
+func (m *measurer) reportProgress(pages domain.PageRange, done bool) {
+	if m.onProgress == nil {
+		return
+	}
+	m.onProgress(ProgressEvent{Range: pages, Completed: m.Measurements(), Done: done})
 }
 
 func (m *measurer) Measurements() int {

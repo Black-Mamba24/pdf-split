@@ -124,7 +124,7 @@ func TestHelpDocumentsPartsSemantics(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	for _, text := range []string{"exactly N files when used alone", "minimum N files with --max-size"} {
+	for _, text := range []string{"exactly N size-balanced files alone", "minimum N files with --max-size"} {
 		if !strings.Contains(stdout.String(), text) {
 			t.Fatalf("help missing %q: %s", text, stdout.String())
 		}

@@ -26,8 +26,9 @@ pdf-split report.pdf --parts 4 --max-size 10MB --overwrite
 
 At least one of `--parts` and `--max-size` is required.
 
-- `--parts N` creates exactly `N` files when used alone. With `--max-size`, it
-  sets the minimum output count.
+- `--parts N` creates exactly `N` files and measures candidate ranges to make
+  their actual sizes as even as practical. With `--max-size`, it sets the
+  minimum output count.
 - `--max-size SIZE` enforces actual output file sizes. Units are
   case-insensitive binary `KB`, `MB`, and `GB`.
 - A single page larger than `--max-size` is emitted alone with a warning.

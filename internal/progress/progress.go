@@ -8,10 +8,13 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Black-Mamba24/pdf-split/internal/domain"
 )
 
 type Reporter interface {
 	Planning(measurements int)
+	PlanningRange(pages domain.PageRange, completed int)
 	StartFile(index, total int, name string, expectedBytes int64)
 	WatchFile(ctx context.Context, path string, done <-chan struct{})
 	Complete(actualBytes int64)
@@ -57,6 +60,13 @@ func (r *reporter) Planning(measurements int) {
 		return
 	}
 	r.writeDynamic("Planning split boundaries... %d measurements completed", measurements)
+}
+
+func (r *reporter) PlanningRange(pages domain.PageRange, completed int) {
+	if !r.shouldWrite() {
+		return
+	}
+	r.writeDynamic("Planning split boundaries: measuring pages %d-%d... %d completed", pages.Start, pages.End, completed)
 }
 
 func (r *reporter) StartFile(index, total int, name string, expectedBytes int64) {

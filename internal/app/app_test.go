@@ -29,6 +29,28 @@ func TestRunPartsOnlyGeneratesExactlyRequestedParts(t *testing.T) {
 	}
 }
 
+func TestRunPartsOnlyBalancesMeasuredOutputSizes(t *testing.T) {
+	engine := newFakeEngine(4, 0)
+	engine.weights = []int64{50, 50, 1, 1}
+
+	err := Run(context.Background(), Options{Input: "input.pdf", Parts: 2, OutputDir: t.TempDir()}, testDependencies(engine))
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	var generated []domain.PageRange
+	for path, pageRange := range engine.outputs {
+		if !strings.Contains(path, ".pdf-split-stage-") {
+			continue
+		}
+		generated = append(generated, pageRange)
+	}
+	if !containsRange(generated, domain.PageRange{Start: 1, End: 1}) ||
+		!containsRange(generated, domain.PageRange{Start: 2, End: 4}) {
+		t.Fatalf("generated ranges = %#v, want measured-size-balanced ranges", generated)
+	}
+}
+
 func TestRunCombinedUsesAtLeastRequestedParts(t *testing.T) {
 	engine := newFakeEngine(6, 10)
 	outputDir := t.TempDir()
@@ -49,6 +71,8 @@ func TestRunCombinedUsesAtLeastRequestedParts(t *testing.T) {
 func TestRunWarnsButSucceedsForOversizedSinglePage(t *testing.T) {
 	engine := newFakeEngine(2, 10)
 	engine.sizes[domain.PageRange{Start: 1, End: 1}] = 200
+	engine.finalSizes[domain.PageRange{Start: 1, End: 2}] = 200
+	engine.finalSizes[domain.PageRange{Start: 1, End: 1}] = 200
 	var stderr bytes.Buffer
 	deps := testDependencies(engine)
 	deps.Stderr = &stderr
@@ -134,6 +158,7 @@ type fakeEngine struct {
 	perPage    int64
 	sizes      map[domain.PageRange]int64
 	finalSizes map[domain.PageRange]int64
+	weights    []int64
 	outputs    map[string]domain.PageRange
 	writeErr   error
 }
@@ -153,6 +178,17 @@ func (e *fakeEngine) Inspect(path string) (pdf.Info, error) {
 	return pdf.Info{Pages: e.pages}, nil
 }
 
+func (e *fakeEngine) InputSize(string) (int64, error) {
+	var size int64
+	if len(e.weights) > 0 {
+		for _, weight := range e.weights {
+			size += weight
+		}
+		return size, nil
+	}
+	return int64(e.pages) * e.perPage, nil
+}
+
 func (e *fakeEngine) WriteRange(_ string, outputPath string, pageRange domain.PageRange) error {
 	if e.writeErr != nil {
 		return e.writeErr
@@ -162,13 +198,28 @@ func (e *fakeEngine) WriteRange(_ string, outputPath string, pageRange domain.Pa
 		size = finalSize
 	}
 	if size == 0 {
-		size = int64(pageRange.Pages()) * e.perPage
+		if len(e.weights) > 0 {
+			for page := pageRange.Start; page <= pageRange.End; page++ {
+				size += e.weights[page-1]
+			}
+		} else {
+			size = int64(pageRange.Pages()) * e.perPage
+		}
 	}
 	if err := os.WriteFile(outputPath, make([]byte, size), 0o600); err != nil {
 		return err
 	}
 	e.outputs[outputPath] = pageRange
 	return nil
+}
+
+func containsRange(ranges []domain.PageRange, target domain.PageRange) bool {
+	for _, pageRange := range ranges {
+		if pageRange == target {
+			return true
+		}
+	}
+	return false
 }
 
 func testDependencies(engine pdf.Engine) Dependencies {

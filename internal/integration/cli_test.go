@@ -20,7 +20,7 @@ func TestCLIPartsCreatesOrderedOutputs(t *testing.T) {
 	if result.code != 0 {
 		t.Fatalf("exit = %d, stderr = %s", result.code, result.stderr)
 	}
-	assertOutputPages(t, outputDir, []int{2, 2, 1})
+	assertOutputCountAndTotalPages(t, outputDir, 3, 5)
 }
 
 func TestCLICombinedNeverProducesFewerThanParts(t *testing.T) {
@@ -183,6 +183,29 @@ func assertOutputPages(t *testing.T, outputDir string, want []int) {
 		if info.Pages != pages {
 			t.Fatalf("%q pages = %d, want %d", path, info.Pages, pages)
 		}
+	}
+}
+
+func assertOutputCountAndTotalPages(t *testing.T, outputDir string, wantCount, wantTotalPages int) {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join(outputDir, "basic-*.pdf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != wantCount {
+		t.Fatalf("outputs = %d, want %d", len(matches), wantCount)
+	}
+	engine := pdf.NewPDFCPUEngine()
+	totalPages := 0
+	for _, path := range matches {
+		info, err := engine.Inspect(path)
+		if err != nil {
+			t.Fatalf("inspect %q: %v", path, err)
+		}
+		totalPages += info.Pages
+	}
+	if totalPages != wantTotalPages {
+		t.Fatalf("total pages = %d, want %d", totalPages, wantTotalPages)
 	}
 }
 

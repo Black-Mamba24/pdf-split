@@ -171,6 +171,28 @@ func TestMeasureWithoutCacheStillMeasures(t *testing.T) {
 	}
 }
 
+func TestMeasureReportsCandidateStartAndCompletion(t *testing.T) {
+	pages := domain.PageRange{Start: 2, End: 4}
+	engine := &fakeEngine{sizes: map[domain.PageRange]int64{pages: 7}}
+	var events []ProgressEvent
+	measurer := NewWithProgress(engine, "input.pdf", t.TempDir(), 8, func(event ProgressEvent) {
+		events = append(events, event)
+	})
+
+	if _, err := measurer.Measure(context.Background(), pages); err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("events = %#v, want start and completion", events)
+	}
+	if events[0].Range != pages || events[0].Completed != 0 || events[0].Done {
+		t.Fatalf("start event = %#v", events[0])
+	}
+	if events[1].Range != pages || events[1].Completed != 1 || !events[1].Done {
+		t.Fatalf("completion event = %#v", events[1])
+	}
+}
+
 type fakeEngine struct {
 	mu                sync.Mutex
 	sizes             map[domain.PageRange]int64

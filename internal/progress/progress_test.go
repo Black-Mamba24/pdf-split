@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Black-Mamba24/pdf-split/internal/domain"
 )
 
 func TestDisabledProgressWritesNothing(t *testing.T) {
@@ -37,6 +39,17 @@ func TestPlanningMeasurementsRenderAsActivityNotPercentage(t *testing.T) {
 	}
 	if strings.Contains(got, "%") {
 		t.Fatalf("planning output = %q, want no percentage", got)
+	}
+}
+
+func TestPlanningRangeShowsCurrentCandidate(t *testing.T) {
+	reporter, stderr := newTestReporter(true)
+
+	reporter.PlanningRange(domain.PageRange{Start: 12, End: 34}, 7)
+
+	got := stderr.String()
+	if !strings.Contains(got, "measuring pages 12-34") || !strings.Contains(got, "7 completed") {
+		t.Fatalf("planning range output = %q", got)
 	}
 }
 

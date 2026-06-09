@@ -93,3 +93,18 @@ func TestPDFCPUEngineWriteRangeRejectsEncrypted(t *testing.T) {
 		t.Fatalf("WriteRange() error = %v, want ErrEncrypted", err)
 	}
 }
+
+func TestPDFCPUEngineWriteRangeDoesNotValidateInputFirst(t *testing.T) {
+	engine := &pdfcpuEngine{
+		inspect: func(string) (Info, error) {
+			t.Fatal("WriteRange unexpectedly inspected the input")
+			return Info{}, nil
+		},
+		pages: map[string]int{filepath.Join("testdata", "basic.pdf"): 5},
+	}
+	output := filepath.Join(t.TempDir(), "pages-2-4.pdf")
+
+	if err := engine.WriteRange(filepath.Join("testdata", "basic.pdf"), output, domain.PageRange{Start: 2, End: 4}); err != nil {
+		t.Fatalf("WriteRange() error = %v", err)
+	}
+}
