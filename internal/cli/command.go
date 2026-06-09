@@ -31,7 +31,15 @@ func NewCommand(deps Dependencies, stdout, stderr io.Writer) *cobra.Command {
 		Long: `Split a PDF into ordered continuous page ranges.
 
 Sizes use case-insensitive binary KB, MB, or GB units. A single page larger
-than --max-size is still emitted with a warning.`,
+than --max-size is still emitted with a warning.
+
+When both constraints are supplied, the output count is at least --parts and
+every non-single-page output respects --max-size.
+
+Examples:
+  pdf-split report.pdf --parts 4
+  pdf-split report.pdf --max-size 10MB --output ./result
+  pdf-split report.pdf --parts 4 --max-size 10MB --overwrite`,
 		Args: func(cmd *cobra.Command, args []string) error {
 			if err := cobra.ExactArgs(1)(cmd, args); err != nil {
 				return invalidArgument(err)
@@ -77,6 +85,9 @@ than --max-size is still emitted with a warning.`,
 	cmd.Flags().StringVarP(&outputDir, "output", "o", ".", "output directory")
 	cmd.Flags().BoolVar(&overwrite, "overwrite", false, "replace existing output files after successful generation")
 	cmd.Flags().BoolVar(&noProgress, "no-progress", false, "disable progress display")
+	cmd.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
+		return invalidArgument(err)
+	})
 	cmd.SetOut(stdout)
 	cmd.SetErr(stderr)
 	return cmd

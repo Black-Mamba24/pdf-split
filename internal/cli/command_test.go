@@ -130,3 +130,18 @@ func TestHelpDocumentsPartsSemantics(t *testing.T) {
 		}
 	}
 }
+
+func TestHelpDocumentsCombinedBehaviorAndExamples(t *testing.T) {
+	var stdout bytes.Buffer
+	cmd := NewCommand(Dependencies{}, &stdout, io.Discard)
+	cmd.SetArgs([]string{"--help"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	for _, text := range []string{"When both constraints", "Examples:", "report.pdf --parts 4"} {
+		if !strings.Contains(stdout.String(), text) {
+			t.Fatalf("help missing %q: %s", text, stdout.String())
+		}
+	}
+}

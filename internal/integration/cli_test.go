@@ -82,6 +82,7 @@ func TestCLIExitCodesAndHelp(t *testing.T) {
 	}{
 		{name: "help", args: []string{"--help"}, code: 0},
 		{name: "missing constraint", args: []string{fixture(t, "basic.pdf")}, code: 2},
+		{name: "unknown flag", args: []string{"--unknown"}, code: 2},
 		{name: "encrypted", args: []string{fixture(t, "encrypted.pdf"), "--parts", "2"}, code: 4},
 		{name: "missing input", args: []string{filepath.Join(t.TempDir(), "missing.pdf"), "--parts", "2"}, code: 3},
 	}
