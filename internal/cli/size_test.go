@@ -47,9 +47,13 @@ func TestParseSizeRejectsInvalidValues(t *testing.T) {
 }
 
 func TestParseSizeRejectsRoundedOverflow(t *testing.T) {
-	input := "8589934592GB"
-	if _, err := ParseSize(input); err == nil {
-		t.Fatalf("ParseSize(%q) unexpectedly succeeded; max int64 is %d", input, int64(math.MaxInt64))
+	for _, input := range []string{
+		"8589934592GB",
+		"8589934591.99999999930150806903839111328125GB", // MaxInt64 + 0.25 bytes.
+	} {
+		if _, err := ParseSize(input); err == nil {
+			t.Fatalf("ParseSize(%q) unexpectedly succeeded; max int64 is %d", input, int64(math.MaxInt64))
+		}
 	}
 }
 

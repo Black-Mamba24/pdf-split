@@ -28,6 +28,9 @@ func ParseSize(input string) (int64, error) {
 		"GB": 1 << 30,
 	}[matches[2]]
 	bytes := new(big.Rat).Mul(value, new(big.Rat).SetInt64(multiplier))
+	if bytes.Cmp(new(big.Rat).SetInt64(math.MaxInt64)) > 0 {
+		return 0, fmt.Errorf("size %q is too large", input)
+	}
 
 	quotient, remainder := new(big.Int), new(big.Int)
 	quotient.QuoRem(bytes.Num(), bytes.Denom(), remainder)
@@ -36,9 +39,6 @@ func ParseSize(input string) (int64, error) {
 	}
 	if quotient.Sign() <= 0 {
 		return 0, fmt.Errorf("invalid size %q: value rounds to zero bytes", input)
-	}
-	if !quotient.IsInt64() || quotient.Cmp(big.NewInt(math.MaxInt64)) > 0 {
-		return 0, fmt.Errorf("size %q is too large", input)
 	}
 
 	return quotient.Int64(), nil
