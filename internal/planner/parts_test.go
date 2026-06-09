@@ -54,6 +54,15 @@ func TestByPartsAvoidsOverflowAtMaximumPageCount(t *testing.T) {
 		if got := plan.Ranges[len(plan.Ranges)-1].End; got != math.MaxInt {
 			t.Fatalf("ByParts(math.MaxInt, %d) ends at %d, want %d", parts, got, math.MaxInt)
 		}
+		for i, pageRange := range plan.Ranges {
+			wantPages := math.MaxInt / parts
+			if i < math.MaxInt%parts {
+				wantPages++
+			}
+			if got := pageRange.Pages(); got != wantPages {
+				t.Fatalf("ByParts(math.MaxInt, %d) range %d has %d pages, want %d", parts, i, got, wantPages)
+			}
+		}
 	}
 }
 

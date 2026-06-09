@@ -22,12 +22,13 @@ func ByParts(totalPages, parts int) (domain.SplitPlan, error) {
 		if i < remainder {
 			pageCount++
 		}
+		endPage := nextPage + (pageCount - 1)
 		ranges = append(ranges, domain.PageRange{
 			Start: nextPage,
-			End:   nextPage + pageCount - 1,
+			End:   endPage,
 		})
 		if i+1 < parts {
-			nextPage += pageCount
+			nextPage = endPage + 1
 		}
 	}
 
