@@ -26,7 +26,9 @@ func ByParts(totalPages, parts int) (domain.SplitPlan, error) {
 			Start: nextPage,
 			End:   nextPage + pageCount - 1,
 		})
-		nextPage += pageCount
+		if i+1 < parts {
+			nextPage += pageCount
+		}
 	}
 
 	plan := domain.SplitPlan{Ranges: ranges}

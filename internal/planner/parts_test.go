@@ -42,11 +42,18 @@ func TestByPartsRejectsInvalidArguments(t *testing.T) {
 	}
 }
 
-func TestByPartsHandlesMaximumPageCount(t *testing.T) {
-	got, err := ByParts(math.MaxInt, 1)
-	want := domain.SplitPlan{Ranges: []domain.PageRange{{Start: 1, End: math.MaxInt}}}
-	if err != nil || !reflect.DeepEqual(got, want) {
-		t.Fatalf("ByParts() = %#v, %v; want %#v", got, err, want)
+func TestByPartsAvoidsOverflowAtMaximumPageCount(t *testing.T) {
+	for _, parts := range []int{1, 2, 3} {
+		plan, err := ByParts(math.MaxInt, parts)
+		if err != nil {
+			t.Fatalf("ByParts(math.MaxInt, %d) error = %v", parts, err)
+		}
+		if err := plan.Validate(math.MaxInt); err != nil {
+			t.Fatalf("ByParts(math.MaxInt, %d) returned invalid plan: %v", parts, err)
+		}
+		if got := plan.Ranges[len(plan.Ranges)-1].End; got != math.MaxInt {
+			t.Fatalf("ByParts(math.MaxInt, %d) ends at %d, want %d", parts, got, math.MaxInt)
+		}
 	}
 }
 
