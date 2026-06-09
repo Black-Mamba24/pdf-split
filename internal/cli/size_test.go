@@ -7,11 +7,12 @@ import (
 
 func TestParseSize(t *testing.T) {
 	tests := map[string]int64{
-		"1KB":    1 << 10,
-		"1kb":    1 << 10,
-		"1.5MB":  1572864,
-		"0.5GB":  536870912,
-		" 2 Mb ": 2 << 20,
+		"1KB":      1 << 10,
+		"1kb":      1 << 10,
+		"1.5MB":    1572864,
+		"0.5GB":    536870912,
+		" 2 Mb ":   2 << 20,
+		"1.0009KB": 1024,
 	}
 
 	for input, want := range tests {

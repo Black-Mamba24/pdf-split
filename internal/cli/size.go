@@ -32,13 +32,9 @@ func ParseSize(input string) (int64, error) {
 		return 0, fmt.Errorf("size %q is too large", input)
 	}
 
-	quotient, remainder := new(big.Int), new(big.Int)
-	quotient.QuoRem(bytes.Num(), bytes.Denom(), remainder)
-	if new(big.Int).Lsh(remainder, 1).Cmp(bytes.Denom()) >= 0 {
-		quotient.Add(quotient, big.NewInt(1))
-	}
+	quotient := new(big.Int).Quo(bytes.Num(), bytes.Denom())
 	if quotient.Sign() <= 0 {
-		return 0, fmt.Errorf("invalid size %q: value rounds to zero bytes", input)
+		return 0, fmt.Errorf("invalid size %q: value is less than one byte", input)
 	}
 
 	return quotient.Int64(), nil

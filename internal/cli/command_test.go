@@ -115,3 +115,18 @@ func TestHelpDocumentsSizeUnitsAndOversizedSinglePageBehavior(t *testing.T) {
 		}
 	}
 }
+
+func TestHelpDocumentsPartsSemantics(t *testing.T) {
+	var stdout bytes.Buffer
+	cmd := NewCommand(Dependencies{}, &stdout, io.Discard)
+	cmd.SetArgs([]string{"--help"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	for _, text := range []string{"exactly N files when used alone", "minimum N files with --max-size"} {
+		if !strings.Contains(stdout.String(), text) {
+			t.Fatalf("help missing %q: %s", text, stdout.String())
+		}
+	}
+}

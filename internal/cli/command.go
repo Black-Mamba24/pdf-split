@@ -73,7 +73,7 @@ than --max-size is still emitted with a warning.`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	cmd.Flags().IntVar(&parts, "parts", 0, "minimum number of output files")
+	cmd.Flags().IntVar(&parts, "parts", 0, "exactly N files when used alone; minimum N files with --max-size")
 	cmd.Flags().StringVar(&maxSizeText, "max-size", "", "maximum output size using KB, MB, or GB")
 	cmd.Flags().StringVarP(&outputDir, "output", "o", ".", "output directory")
 	cmd.Flags().BoolVar(&overwrite, "overwrite", false, "replace existing output files after successful generation")
