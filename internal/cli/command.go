@@ -32,15 +32,20 @@ func NewCommand(deps Dependencies, stdout, stderr io.Writer) *cobra.Command {
 
 Sizes use case-insensitive binary KB, MB, or GB units. A single page larger
 than --max-size is still emitted with a warning.`,
-		Args: cobra.ExactArgs(1),
+		Args: func(cmd *cobra.Command, args []string) error {
+			if err := cobra.ExactArgs(1)(cmd, args); err != nil {
+				return invalidArgument(err)
+			}
+			return nil
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			partsSet := cmd.Flags().Changed("parts")
 			maxSizeSet := cmd.Flags().Changed("max-size")
 			if !partsSet && !maxSizeSet {
-				return errors.New("at least one of --parts or --max-size is required")
+				return invalidArgument(errors.New("at least one of --parts or --max-size is required"))
 			}
 			if partsSet && parts < 1 {
-				return errors.New("--parts must be positive")
+				return invalidArgument(errors.New("--parts must be positive"))
 			}
 
 			var maxSize int64
@@ -48,7 +53,7 @@ than --max-size is still emitted with a warning.`,
 				var err error
 				maxSize, err = ParseSize(maxSizeText)
 				if err != nil {
-					return fmt.Errorf("--max-size: %w", err)
+					return invalidArgument(fmt.Errorf("--max-size: %w", err))
 				}
 			}
 			if deps.Run == nil {
@@ -75,4 +80,8 @@ than --max-size is still emitted with a warning.`,
 	cmd.SetOut(stdout)
 	cmd.SetErr(stderr)
 	return cmd
+}
+
+func invalidArgument(err error) error {
+	return &app.ExitError{Code: 2, Err: err}
 }

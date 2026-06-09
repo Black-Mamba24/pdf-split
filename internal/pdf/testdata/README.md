@@ -13,3 +13,6 @@ The generator uses only deterministic standard-library image drawing and
 pdfcpu's import and encryption APIs. The generated PDFs may contain differing
 PDF metadata between runs, but their page content and encryption settings are
 reproducible.
+
+The visual integration test uses Poppler's `pdftoppm` when available and skips
+with an explicit message when no renderer is installed.
