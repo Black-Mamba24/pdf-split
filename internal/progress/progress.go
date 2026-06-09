@@ -30,11 +30,16 @@ type reporter struct {
 	currentTotal  int
 	currentName   string
 	expectedBytes int64
+	lastDynamic   string
 	closed        bool
 }
 
 func New(w io.Writer, enabled bool) Reporter {
 	return newReporter(w, enabled, enabled, time.Now)
+}
+
+func NewWithTerminal(w io.Writer, enabled, terminal bool) Reporter {
+	return newReporter(w, enabled, terminal, time.Now)
 }
 
 func newReporter(w io.Writer, enabled, terminal bool, now func() time.Time) *reporter {
@@ -135,6 +140,13 @@ func (r *reporter) shouldWrite() bool {
 
 func (r *reporter) writeDynamic(format string, args ...any) {
 	line := fmt.Sprintf(format, args...)
+	r.mu.Lock()
+	if line == r.lastDynamic {
+		r.mu.Unlock()
+		return
+	}
+	r.lastDynamic = line
+	r.mu.Unlock()
 	if r.terminal {
 		fmt.Fprintf(r.w, "\r%s", line)
 		return

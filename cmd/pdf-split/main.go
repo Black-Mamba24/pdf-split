@@ -20,8 +20,8 @@ func main() {
 		Stdout: os.Stdout,
 		Stderr: os.Stderr,
 		NewReporter: func(noProgress bool) progress.Reporter {
-			enabled := !noProgress && term.IsTerminal(int(os.Stderr.Fd()))
-			return progress.New(os.Stderr, enabled)
+			terminal := term.IsTerminal(int(os.Stderr.Fd()))
+			return progress.NewWithTerminal(os.Stderr, !noProgress, terminal)
 		},
 	}
 	cmd := cli.NewCommand(cli.Dependencies{Run: func(ctx context.Context, opts app.Options) error {

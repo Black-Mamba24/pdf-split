@@ -209,6 +209,7 @@ func createPlan(ctx context.Context, opts Options, totalPages int, engine pdf.En
 		return plan, nil, nil, err
 	}
 
+	reporter.Planning(0)
 	tempDir, err := os.MkdirTemp("", "pdf-split-measure-*")
 	if err != nil {
 		return domain.SplitPlan{}, nil, nil, err

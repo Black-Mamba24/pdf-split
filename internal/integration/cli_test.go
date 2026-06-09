@@ -96,13 +96,26 @@ func TestCLIExitCodesAndHelp(t *testing.T) {
 	}
 }
 
-func TestCLIRedirectedStderrHasNoDynamicProgress(t *testing.T) {
+func TestCLIRedirectedStderrContainsProgressLogLines(t *testing.T) {
 	result := runCLI(t, fixture(t, "basic.pdf"), "--parts", "2", "--output", t.TempDir())
 	if result.code != 0 {
 		t.Fatalf("exit = %d, stderr = %s", result.code, result.stderr)
 	}
-	if strings.Contains(result.stderr, "Planning split boundaries") || strings.Contains(result.stderr, "[1/") {
-		t.Fatalf("redirected stderr contains dynamic progress: %q", result.stderr)
+	if !strings.Contains(result.stderr, "[1/2]") || !strings.Contains(result.stderr, "100%") {
+		t.Fatalf("redirected stderr missing progress logs: %q", result.stderr)
+	}
+	if strings.Contains(result.stderr, "\r") {
+		t.Fatalf("redirected stderr contains dynamic carriage returns: %q", result.stderr)
+	}
+}
+
+func TestCLINoProgressSuppressesProgressLogs(t *testing.T) {
+	result := runCLI(t, fixture(t, "basic.pdf"), "--parts", "2", "--output", t.TempDir(), "--no-progress")
+	if result.code != 0 {
+		t.Fatalf("exit = %d, stderr = %s", result.code, result.stderr)
+	}
+	if result.stderr != "" {
+		t.Fatalf("--no-progress stderr = %q, want empty", result.stderr)
 	}
 }
 

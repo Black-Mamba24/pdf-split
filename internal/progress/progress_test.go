@@ -84,6 +84,37 @@ func TestProgressWritesOnlyToSuppliedStderrWriter(t *testing.T) {
 	}
 }
 
+func TestNonTerminalProgressWritesRetainedLogLines(t *testing.T) {
+	var stderr bytes.Buffer
+	reporter := NewWithTerminal(&stderr, true, false)
+
+	reporter.Planning(3)
+	reporter.StartFile(1, 1, "report-001.pdf", 100)
+	reporter.Complete(100)
+
+	got := stderr.String()
+	if strings.Contains(got, "\r") {
+		t.Fatalf("non-terminal progress contains carriage return: %q", got)
+	}
+	if lines := strings.Count(got, "\n"); lines != 3 {
+		t.Fatalf("non-terminal progress = %q, want 3 retained log lines", got)
+	}
+}
+
+func TestNonTerminalProgressSuppressesDuplicateLogLines(t *testing.T) {
+	var stderr bytes.Buffer
+	reporter := NewWithTerminal(&stderr, true, false)
+	done := make(chan struct{})
+	close(done)
+
+	reporter.StartFile(1, 1, "report-001.pdf", 100)
+	reporter.WatchFile(context.Background(), filepath.Join(t.TempDir(), "missing.pdf"), done)
+
+	if lines := strings.Count(stderr.String(), "\n"); lines != 1 {
+		t.Fatalf("non-terminal progress = %q, want one unique log line", stderr.String())
+	}
+}
+
 func TestWatchFileStopsWhenDoneCloses(t *testing.T) {
 	reporter, stderr := newTestReporter(true)
 	tempFile := filepath.Join(t.TempDir(), "report-001.pdf")

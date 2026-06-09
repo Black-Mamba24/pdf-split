@@ -33,8 +33,8 @@ At least one of `--parts` and `--max-size` is required.
 - A single page larger than `--max-size` is emitted alone with a warning.
 - `--output DIR` defaults to the current directory and creates missing parents.
 - `--overwrite` replaces conflicts only after every new output verifies.
-- `--no-progress` disables progress. Dynamic progress is otherwise shown only
-  when stderr is an interactive terminal.
+- `--no-progress` disables progress. Interactive terminals use dynamic
+  refreshes; redirected stderr and IDE consoles receive retained log lines.
 
 Outputs use the input basename and at least three digits, such as
 `report-001.pdf`. Existing conflicts fail unless `--overwrite` is supplied.
