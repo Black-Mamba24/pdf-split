@@ -71,6 +71,10 @@ func TestVerifyRejectsNonSinglePageOutputOverMaxBytes(t *testing.T) {
 	if err == nil {
 		t.Fatal("Verify() error = nil, want oversized multi-page output error")
 	}
+	var sizeErr *SizeLimitError
+	if !errors.As(err, &sizeErr) || sizeErr.Range != req.Plan.Ranges[1] {
+		t.Fatalf("Verify() error = %v, want SizeLimitError for %#v", err, req.Plan.Ranges[1])
+	}
 }
 
 func TestVerifyAcceptsExplicitOversizedSinglePage(t *testing.T) {

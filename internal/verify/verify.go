@@ -20,6 +20,17 @@ type Request struct {
 	OversizedSingles map[domain.PageRange]struct{}
 }
 
+type SizeLimitError struct {
+	Path     string
+	Range    domain.PageRange
+	Size     int64
+	MaxBytes int64
+}
+
+func (e *SizeLimitError) Error() string {
+	return fmt.Sprintf("output %q for pages %d-%d is %d bytes, exceeds limit %d", e.Path, e.Range.Start, e.Range.End, e.Size, e.MaxBytes)
+}
+
 func Verify(inspector Inspector, req Request) error {
 	if err := req.Plan.Validate(req.TotalPages); err != nil {
 		return err
@@ -46,7 +57,7 @@ func Verify(inspector Inspector, req Request) error {
 			return fmt.Errorf("stat output %q: %w", path, err)
 		}
 		if req.MaxBytes > 0 && stat.Size() > req.MaxBytes && !allowedOversizedSingle(pageRange, req.OversizedSingles) {
-			return fmt.Errorf("output %q for pages %d-%d is %d bytes, exceeds limit %d", path, pageRange.Start, pageRange.End, stat.Size(), req.MaxBytes)
+			return &SizeLimitError{Path: path, Range: pageRange, Size: stat.Size(), MaxBytes: req.MaxBytes}
 		}
 	}
 

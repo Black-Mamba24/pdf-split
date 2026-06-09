@@ -6,21 +6,15 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/Black-Mamba24/pdf-split/internal/app"
 	"github.com/spf13/cobra"
 )
 
 type Dependencies struct {
-	Run func(context.Context, Options) error
+	Run func(context.Context, app.Options) error
 }
 
-type Options struct {
-	Input      string
-	Parts      int
-	MaxSize    int64
-	OutputDir  string
-	Overwrite  bool
-	NoProgress bool
-}
+type Options = app.Options
 
 func NewCommand(deps Dependencies, stdout, stderr io.Writer) *cobra.Command {
 	var (
@@ -61,7 +55,7 @@ than --max-size is still emitted with a warning.`,
 				return errors.New("split runner is not configured")
 			}
 
-			return deps.Run(cmd.Context(), Options{
+			return deps.Run(cmd.Context(), app.Options{
 				Input:      args[0],
 				Parts:      parts,
 				MaxSize:    maxSize,
