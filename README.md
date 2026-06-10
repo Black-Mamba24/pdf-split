@@ -41,9 +41,9 @@ pdf-split report.pdf --parts 4 --max-size 10MB --overwrite
 
 At least one of `--parts` and `--max-size` is required.
 
-- `--parts N` creates exactly `N` files and measures candidate ranges to make
-  their actual sizes as even as practical. With `--max-size`, it sets the
-  minimum output count.
+- `--parts N` creates exactly `N` files and uses planning measurements for
+  candidate ranges to make final verified output sizes as even as practical.
+  With `--max-size`, it sets the minimum output count.
 - `--max-size SIZE` enforces actual output file sizes. Units are
   case-insensitive binary `KB`, `MB`, and `GB`.
 - A single page larger than `--max-size` is emitted alone with a warning.
@@ -58,8 +58,9 @@ Outputs use the input basename and at least three digits, such as
 ## Guarantees And Limits
 
 The tool verifies ordered page coverage, output readability, page counts, and
-actual maximum sizes before publishing. Publication uses same-filesystem
-staging and restores existing targets if replacement fails.
+actual maximum sizes before publishing. Planning measurements are references;
+pre-publication verification of final files enforces size limits. Publication
+uses same-filesystem staging and restores existing targets if replacement fails.
 
 Page content, dimensions, and rotation are preserved. Document-level features
 such as bookmarks, forms, attachments, metadata, signatures, and encryption

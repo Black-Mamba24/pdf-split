@@ -36,6 +36,7 @@ type cacheEntry struct {
 
 type measurer struct {
 	engine         pdf.Engine
+	session        pdf.MeasurementSession
 	input          string
 	canonicalInput string
 	tempDir        string
@@ -58,8 +59,17 @@ func NewWithProgress(engine pdf.Engine, input, tempDir string, cacheEntries int,
 		canonicalInput = input
 	}
 
+	return newMeasurer(engine, nil, input, canonicalInput, tempDir, cacheEntries, onProgress)
+}
+
+func NewWithSession(session pdf.MeasurementSession, cacheEntries int, onProgress func(ProgressEvent)) Measurer {
+	return newMeasurer(nil, session, "", "", "", cacheEntries, onProgress)
+}
+
+func newMeasurer(engine pdf.Engine, session pdf.MeasurementSession, input, canonicalInput, tempDir string, cacheEntries int, onProgress func(ProgressEvent)) Measurer {
 	return &measurer{
 		engine:         engine,
+		session:        session,
 		input:          input,
 		canonicalInput: canonicalInput,
 		tempDir:        tempDir,
@@ -80,6 +90,22 @@ func (m *measurer) Measure(ctx context.Context, pages domain.PageRange) (int64, 
 		return 0, err
 	}
 
+	m.reportProgress(pages, false)
+	size, err := m.measureUncached(pages)
+	if err != nil {
+		return 0, err
+	}
+	m.store(key, size)
+	m.recordMeasurement()
+	m.reportProgress(pages, true)
+	return size, nil
+}
+
+func (m *measurer) measureUncached(pages domain.PageRange) (int64, error) {
+	if m.session != nil {
+		return m.session.MeasureRange(pages)
+	}
+
 	candidate, err := os.CreateTemp(m.tempDir, "pdf-split-measure-*.pdf")
 	if err != nil {
 		return 0, fmt.Errorf("create measurement candidate: %w", err)
@@ -94,7 +120,6 @@ func (m *measurer) Measure(ctx context.Context, pages domain.PageRange) (int64, 
 	}
 	defer os.Remove(candidatePath)
 
-	m.reportProgress(pages, false)
 	if err := m.engine.WriteRange(m.input, candidatePath, pages); err != nil {
 		return 0, err
 	}
@@ -103,11 +128,7 @@ func (m *measurer) Measure(ctx context.Context, pages domain.PageRange) (int64, 
 	if err != nil {
 		return 0, fmt.Errorf("stat measurement candidate: %w", err)
 	}
-	size := info.Size()
-	m.store(key, size)
-	m.recordMeasurement()
-	m.reportProgress(pages, true)
-	return size, nil
+	return info.Size(), nil
 }
 
 func (m *measurer) reportProgress(pages domain.PageRange, done bool) {

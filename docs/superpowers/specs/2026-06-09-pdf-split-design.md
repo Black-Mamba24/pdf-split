@@ -107,8 +107,9 @@ The implementation is divided into focused Go packages:
 - `internal/pdf`: PDF validation, encryption detection, page count, and writing
   a continuous page range.
 - `internal/planner`: creates and adjusts valid `SplitPlan` values.
-- `internal/measure`: writes temporary candidate PDFs, measures actual sizes,
-  and maintains a bounded measurement cache.
+- `internal/measure`: obtains planning reference sizes for candidate ranges,
+  using temporary candidate PDFs or reusable measurement sessions, and maintains
+  a bounded measurement cache.
 - `internal/verify`: validates plan coverage, output page counts, readability,
   actual sizes, and ordering.
 - `internal/output`: naming, temporary workspace, conflict checks, safe
@@ -141,8 +142,10 @@ one.
 ### Maximum Size
 
 PDF output size is not additive by page because shared fonts, images, and other
-resources may be duplicated or removed when a range is written. A strict size
-limit therefore requires generating and measuring candidate PDFs.
+resources may be duplicated or removed when a range is written. Planning
+therefore requires serializing candidate ranges to obtain planning reference
+sizes; strict enforcement is performed later by statting and verifying final
+outputs.
 
 The planner uses adaptive boundary search:
 
@@ -162,13 +165,15 @@ The planner uses adaptive boundary search:
 
 The result is efficient and approximately balanced; mathematical global
 optimality, including proof of the globally minimum output count, is not
-required. Candidate files are placed in a temporary directory and deleted
-promptly. The complete input and all candidates are never retained in memory
-together.
+required. File-backed candidate measurements are placed in a temporary directory
+and deleted promptly. Reusable measurement sessions avoid candidate files for
+eligible inputs. The complete input and all candidates are never retained in
+memory together.
 
 The final outputs are regenerated and their actual on-disk sizes are strictly
-verified. If any non-single-page output exceeds the limit, its boundary is
-reduced and the affected suffix is replanned.
+verified. These final stats supersede any planning reference size. If any
+non-single-page output exceeds the limit, its boundary is reduced and the
+affected suffix is replanned.
 
 ### Combined Constraints
 
@@ -191,11 +196,11 @@ Planning split boundaries... 42 measurements completed
 ```
 
 Final generation displays one retained line per output and calculates the
-current percentage from bytes written compared with the size measured during
-planning. For `--parts`-only runs, which do not otherwise require measurement,
-the tool uses an estimated target and holds the display below 100% until the
-file is closed and verified. Progress is informational and never participates
-in correctness decisions:
+current percentage from bytes written compared with the planning reference size.
+For `--parts`-only runs, which do not otherwise require measurement, the tool
+uses an estimated target and holds the display below 100% until the file is
+closed and verified. Progress is informational and never participates in
+correctness decisions or final size enforcement:
 
 ```text
 [1/4] report-001.pdf  #################### 100%  8.4MB

@@ -40,6 +40,10 @@ type Dependencies struct {
 	Stderr      io.Writer
 }
 
+const maxReusableMeasurementInputBytes int64 = 1 << 30
+
+var errInputUnavailable = errors.New("input is unavailable")
+
 type ExitError struct {
 	Code int
 	Err  error
@@ -203,14 +207,9 @@ func appendUniqueRange(ranges []domain.PageRange, target domain.PageRange) []dom
 	return append(ranges, target)
 }
 
-func createPlan(ctx context.Context, opts Options, totalPages int, engine pdf.Engine, reporter progress.Reporter) (domain.SplitPlan, []int64, []domain.PageRange, error) {
+func createPlan(ctx context.Context, opts Options, totalPages int, engine pdf.Engine, reporter progress.Reporter) (plan domain.SplitPlan, sizes []int64, oversized []domain.PageRange, err error) {
 	reporter.Planning(0)
-	tempDir, err := os.MkdirTemp("", "pdf-split-measure-*")
-	if err != nil {
-		return domain.SplitPlan{}, nil, nil, err
-	}
-	defer os.RemoveAll(tempDir)
-	measurer := measure.NewWithProgress(engine, opts.Input, tempDir, 512, func(event measure.ProgressEvent) {
+	onProgress := func(event measure.ProgressEvent) {
 		if opts.MaxSize > 0 && event.Range.Pages() == 1 {
 			if event.Done {
 				reporter.ScanningPages(event.Range.End, totalPages)
@@ -222,7 +221,16 @@ func createPlan(ctx context.Context, opts Options, totalPages int, engine pdf.En
 			return
 		}
 		reporter.PlanningRange(event.Range, event.Completed)
-	})
+	}
+	measurer, cleanup, err := createPlanningMeasurer(engine, opts.Input, onProgress)
+	if err != nil {
+		return domain.SplitPlan{}, nil, nil, err
+	}
+	defer func() {
+		if closeErr := cleanup(); err == nil && closeErr != nil {
+			err = closeErr
+		}
+	}()
 	if opts.MaxSize > 0 {
 		result, err := planner.ByMaxSize(ctx, totalPages, measurer, planner.SizeOptions{
 			MaxBytes:        opts.MaxSize,
@@ -238,6 +246,43 @@ func createPlan(ctx context.Context, opts Options, totalPages int, engine pdf.En
 
 	result, err := planner.ByBalancedParts(ctx, totalPages, opts.Parts, measurer, 64)
 	return result.Plan, result.Sizes, nil, err
+}
+
+func createPlanningMeasurer(engine pdf.Engine, input string, onProgress func(measure.ProgressEvent)) (measure.Measurer, func() error, error) {
+	newFileBacked := func() (measure.Measurer, func() error, error) {
+		tempDir, err := os.MkdirTemp("", "pdf-split-measure-*")
+		if err != nil {
+			return nil, nil, err
+		}
+		cleanup := func() error {
+			return os.RemoveAll(tempDir)
+		}
+		return measure.NewWithProgress(engine, input, tempDir, 512, onProgress), cleanup, nil
+	}
+
+	opener, ok := engine.(pdf.MeasurementSessionOpener)
+	if !ok {
+		return newFileBacked()
+	}
+	info, err := os.Stat(input)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%w: stat input %q: %v", errInputUnavailable, input, err)
+	}
+	if info.Size() > maxReusableMeasurementInputBytes {
+		return newFileBacked()
+	}
+
+	session, err := opener.OpenMeasurementSession(input)
+	if err != nil {
+		if errors.Is(err, pdf.ErrMeasurementSessionUnsupported) {
+			return newFileBacked()
+		}
+		return nil, nil, err
+	}
+	cleanup := func() error {
+		return session.Close()
+	}
+	return measure.NewWithSession(session, 512, onProgress), cleanup, nil
 }
 
 func maxSizeMeasurementBudget(totalPages int) int {
@@ -294,6 +339,9 @@ func classifyPlanningError(err error) error {
 	}
 	if errors.Is(err, pdf.ErrEncrypted) {
 		return exit(4, err)
+	}
+	if errors.Is(err, errInputUnavailable) {
+		return exit(3, err)
 	}
 	return exit(5, err)
 }

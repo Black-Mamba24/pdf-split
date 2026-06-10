@@ -23,7 +23,7 @@ generation and verification remain unchanged.
 ## Goals
 
 - Reduce planning time by at least 50% for representative PDFs at most 1 GiB.
-- Preserve the current split-plan behavior, strict maximum-size guarantees,
+- Preserve the user-facing split contract, strict maximum-size guarantees,
   warnings, progress output, and final verification.
 - Keep the existing low-memory behavior for PDFs larger than 1 GiB.
 - Bound the reusable session lifetime to one planning operation.
@@ -73,6 +73,11 @@ Planning selects one measurement strategy before invoking the planner:
 The threshold is a package constant expressed as `1 << 30` bytes. Inputs
 exactly 1 GiB are eligible.
 
+pdfcpu v0.12.1 mutates the source context while migrating named destinations
+during page extraction. Inputs whose parsed context contains a `Dests` name
+tree are therefore classified as unsupported for reusable measurement and
+automatically use the file-backed measurer.
+
 Fallback is deliberately limited. Falling back after an unexpected error could
 hide corruption, permission failures, or defects and would repeat expensive
 work without a clear reason.
@@ -119,7 +124,9 @@ cannot interrupt a measurement already executing.
 2. Builds the same fast pdfcpu configuration used by `WriteRange`.
 3. Sets the command mode to `TRIM`.
 4. calls `api.ReadValidateAndOptimize` once.
-5. Retains the source file and parsed source context until `Close`.
+5. Rejects parsed contexts containing a `Dests` name tree with
+   `ErrMeasurementSessionUnsupported` and closes the source.
+6. Retains the source file and parsed source context until `Close`.
 
 `MeasureRange`:
 
@@ -153,15 +160,17 @@ func (w *countingWriter) Write(p []byte) (int, error) {
 }
 ```
 
-This preserves the exact byte count produced by pdfcpu serialization without
-storing the candidate in memory or writing it to disk. It does not estimate the
-size.
+This reports the exact byte count emitted by that specific pdfcpu planning
+serialization stream without storing the candidate in memory or writing it to
+disk. It is not a heuristic estimate, but it is also not an authoritative final
+output size.
 
-The serialized size must be compared against `WriteRange` output in
-compatibility tests. Both paths use the same pdfcpu configuration and page
-extraction/write operations, so they are expected to be byte-count equivalent.
-Final verification remains authoritative if a library-version difference
-causes a mismatch.
+Separate pdfcpu serializations of the same range can differ by a few bytes, for
+example because object ordering can depend on Go map iteration. Compatibility
+comparisons against `WriteRange + stat` are diagnostic only. Final files are
+regenerated through `Engine.WriteRange`, statted, and verified independently; if
+final bytes exceed the limit, existing verification and replanning remain the
+source of truth.
 
 ### Measurer Integration
 
@@ -193,10 +202,10 @@ Inspect input
   -> LRU cache lookup
   -> extract pages from reusable source context
   -> serialize candidate to counting writer
-  -> cache and return exact size
+  -> cache and return planning reference size
   -> close session after planning
   -> generate final outputs through existing WriteRange
-  -> run existing final verification
+  -> stat final files and run existing final verification
 ```
 
 For inputs larger than 1 GiB:
@@ -228,6 +237,11 @@ The initial implementation should define one sentinel,
 invalid-PDF errors are not fallback conditions because the existing path cannot
 correct them.
 
+The initial classified compatibility case is a parsed pdfcpu context containing
+named destinations. Repeated `ExtractPages` calls may patch its source name
+tree, so session setup must close the source and return
+`pdf.ErrMeasurementSessionUnsupported` before planning starts.
+
 Once planning has successfully started with a reusable session, an individual
 `MeasureRange` failure terminates planning. Mid-planning fallback is excluded:
 it complicates progress and cache semantics, may hide deterministic failures,
@@ -240,17 +254,19 @@ planning already failed, the planning error remains primary.
 
 The optimization must not weaken the maximum-size contract:
 
-- Candidate sizes remain based on actual pdfcpu serialization.
+- Planning reference sizes remain based on actual pdfcpu serialization in the
+  selected measurement path, not heuristic estimates.
 - The same range-size LRU cache is used.
 - Planner behavior and measurement budgets are unchanged.
 - Final outputs are still regenerated using `Engine.WriteRange`.
 - Final outputs are still statted and strictly verified.
 - Existing replan-on-final-size-overflow behavior remains unchanged.
+- Only final generated file sizes are authoritative for enforcing `--max-size`.
 
 Holding a parsed source context may expose pdfcpu mutation assumptions. Tests
 must repeatedly measure overlapping and reordered ranges from one session and
-verify that results remain stable. Measurements stay serial until pdfcpu
-explicitly guarantees safe concurrent reads.
+verify that measurements continue to succeed. Measurements stay serial until
+pdfcpu explicitly guarantees safe concurrent reads.
 
 ## Resource and Memory Management
 
@@ -288,11 +304,13 @@ Diagnostic logging is not part of this change.
 `internal/pdf`:
 
 - Opening a session parses a valid input and reports correct page bounds.
-- Measuring a range returns the same byte count as `WriteRange + stat`.
-- Repeated, overlapping, and reordered measurements remain stable.
+- Measuring a range returns a positive planning reference size.
+- Repeated, overlapping, and reordered measurements continue to succeed.
 - Invalid and out-of-bounds ranges fail without corrupting the session.
 - Closing releases the input and rejects or safely handles later use.
 - Unsupported-session errors are distinguishable from operational failures.
+- Compatibility comparisons with `WriteRange + stat` are diagnostic only and do
+  not define correctness.
 
 `internal/measure`:
 
@@ -313,9 +331,12 @@ Diagnostic logging is not part of this change.
 
 ### Integration Tests
 
-- Compare plans, measured sizes, output counts, warnings, and final files
-  between reusable and file-backed strategies for fixtures containing text,
-  images, rotations, mixed dimensions, and shared resources.
+- Run reusable and file-backed strategies on fixtures containing text, images,
+  rotations, mixed dimensions, and shared resources, then compare the
+  user-facing correctness contract: page coverage, requested minimum output
+  count, warnings semantics, readability, and final verification results.
+- Record plan and planning-reference-size differences as diagnostics rather than
+  pass/fail criteria.
 - Verify final outputs continue to satisfy strict size limits.
 - Verify no measurement candidate files are created by the reusable strategy.
 - Verify the existing strategy still works for a synthetic input classified as
@@ -336,7 +357,8 @@ The benchmark runs both strategies against the same input and reports:
 - Allocated bytes and allocations.
 - Peak resident memory when available from the platform-specific harness.
 - Completed measurement count.
-- Produced plan and measured sizes.
+- Produced plan, planning reference sizes, and final verification outcome when
+  generated.
 
 Benchmark fixtures should include:
 
@@ -348,8 +370,10 @@ Benchmark fixtures should include:
 
 - For representative input PDFs at most 1 GiB, reusable-session planning is at
   least 50% faster than the current file-backed strategy.
-- For the same input and options, both strategies produce equivalent plans,
-  measured sizes, warnings, and verification results.
+- For the same input and options, both strategies preserve the same user-facing
+  correctness contract: valid coverage, requested minimum output count, warning
+  semantics, and final verification results. Planning reference sizes and plan
+  boundaries may differ and are not authoritative.
 - Peak memory for the reusable strategy does not exceed
   `3 * input file size + 512 MiB`.
 - Inputs larger than 1 GiB automatically use the existing file-backed strategy
@@ -367,8 +391,9 @@ Primary risks and controls:
 | Risk | Control |
 | --- | --- |
 | Parsed context consumes excessive memory | 1 GiB eligibility threshold, planning-scoped lifetime, benchmark memory acceptance |
-| pdfcpu mutates source context during extraction | Serial measurements and repeated-overlap stability tests |
-| Counting-writer size differs from file output | Byte-count compatibility tests and unchanged final verification/replanning |
+| pdfcpu mutates source context during extraction | Serial measurements, repeated-overlap tests, and explicit compatibility fallback for known mutable structures |
+| pdfcpu mutates named destinations during extraction | Detect the `Dests` name tree during session setup and fall back to file-backed measurement |
+| Planning reference size differs from final file output | Final stat, verification, and replanning are authoritative; compatibility comparisons are diagnostic only |
 | Session setup fails for a compatible PDF | Classified fallback to existing file-backed path |
 | Optimization hides real failures | Fallback only for explicit unsupported-session errors |
 | Large-input behavior regresses | Inputs larger than 1 GiB never open a reusable session |
@@ -379,8 +404,8 @@ Primary risks and controls:
   - Add optional measurement-session interfaces and fallback sentinel.
 - `internal/pdf/pdfcpu.go`
   - Implement the reusable pdfcpu session and counting writer.
-- `internal/pdf/pdfcpu_test.go`
-  - Add session correctness, stability, and byte-equivalence tests.
+- `internal/pdf/measurement_session_test.go`
+  - Add session lifecycle, bounds, reuse, and planning-reference tests.
 - `internal/measure/measurer.go`
   - Allow cache misses to use a reusable session while preserving existing
     file-backed behavior.

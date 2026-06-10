@@ -182,6 +182,112 @@ func TestMeasureReportsCandidateStartAndCompletion(t *testing.T) {
 	if _, err := measurer.Measure(context.Background(), pages); err != nil {
 		t.Fatal(err)
 	}
+	assertProgressEvents(t, events, pages)
+}
+
+func TestMeasureWithSessionCachesAndReportsProgress(t *testing.T) {
+	pages := domain.PageRange{Start: 2, End: 4}
+	session := &fakeSession{sizes: map[domain.PageRange]int64{pages: 123}}
+	var events []ProgressEvent
+	measurer := NewWithSession(session, 8, func(event ProgressEvent) {
+		events = append(events, event)
+	})
+
+	for i := 0; i < 2; i++ {
+		got, err := measurer.Measure(context.Background(), pages)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != 123 {
+			t.Fatalf("Measure() = %d, want 123", got)
+		}
+	}
+	if session.calls != 1 {
+		t.Fatalf("MeasureRange calls = %d, want 1", session.calls)
+	}
+	if measurer.Measurements() != 1 {
+		t.Fatalf("Measurements() = %d, want 1", measurer.Measurements())
+	}
+	assertProgressEvents(t, events, pages)
+}
+
+func TestMeasureWithSessionDoesNotCreateCandidateFiles(t *testing.T) {
+	tempDir := t.TempDir()
+	pages := domain.PageRange{Start: 1, End: 1}
+	session := &fakeSession{sizes: map[domain.PageRange]int64{pages: 7}}
+	measurer := NewWithSession(session, 8, nil)
+
+	if _, err := measurer.Measure(context.Background(), pages); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(tempDir)
+	if err != nil {
+		t.Fatalf("ReadDir() error = %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("temp dir contains %d files after session Measure(), want 0", len(entries))
+	}
+}
+
+func TestMeasureWithSessionChecksCancellationBeforeMeasuring(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	session := &fakeSession{}
+	measurer := NewWithSession(session, 8, nil)
+
+	_, err := measurer.Measure(ctx, domain.PageRange{Start: 1, End: 1})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Measure() error = %v, want context.Canceled", err)
+	}
+	if session.calls != 0 {
+		t.Fatalf("MeasureRange calls = %d, want 0", session.calls)
+	}
+	if measurer.Measurements() != 0 {
+		t.Fatalf("Measurements() = %d, want 0", measurer.Measurements())
+	}
+}
+
+func TestMeasureWithSessionPropagatesFailureWithoutCompletion(t *testing.T) {
+	wantErr := errors.New("measure failed")
+	session := &fakeSession{err: wantErr}
+	var events []ProgressEvent
+	measurer := NewWithSession(session, 8, func(event ProgressEvent) {
+		events = append(events, event)
+	})
+
+	_, err := measurer.Measure(context.Background(), domain.PageRange{Start: 1, End: 1})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("Measure() error = %v, want %v", err, wantErr)
+	}
+	if measurer.Measurements() != 0 {
+		t.Fatalf("Measurements() = %d, want 0", measurer.Measurements())
+	}
+	if len(events) != 1 || events[0].Done {
+		t.Fatalf("events = %#v, want only start event", events)
+	}
+}
+
+func TestMeasureWithSessionWithoutCacheStillMeasures(t *testing.T) {
+	pages := domain.PageRange{Start: 1, End: 1}
+	session := &fakeSession{sizes: map[domain.PageRange]int64{pages: 7}}
+	measurer := NewWithSession(session, 0, nil)
+
+	for i := 0; i < 2; i++ {
+		got, err := measurer.Measure(context.Background(), pages)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != 7 {
+			t.Fatalf("Measure() = %d, want 7", got)
+		}
+	}
+	if session.calls != 2 {
+		t.Fatalf("MeasureRange calls = %d, want 2", session.calls)
+	}
+}
+
+func assertProgressEvents(t *testing.T, events []ProgressEvent, pages domain.PageRange) {
+	t.Helper()
 	if len(events) != 2 {
 		t.Fatalf("events = %#v, want start and completion", events)
 	}
@@ -192,6 +298,22 @@ func TestMeasureReportsCandidateStartAndCompletion(t *testing.T) {
 		t.Fatalf("completion event = %#v", events[1])
 	}
 }
+
+type fakeSession struct {
+	sizes map[domain.PageRange]int64
+	calls int
+	err   error
+}
+
+func (s *fakeSession) MeasureRange(pageRange domain.PageRange) (int64, error) {
+	s.calls++
+	if s.err != nil {
+		return 0, s.err
+	}
+	return s.sizes[pageRange], nil
+}
+
+func (s *fakeSession) Close() error { return nil }
 
 type fakeEngine struct {
 	mu                sync.Mutex

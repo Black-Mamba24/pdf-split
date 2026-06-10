@@ -192,6 +192,183 @@ func TestRunStopsOnCancelledContext(t *testing.T) {
 	}
 }
 
+func TestRunUsesAndClosesSessionAtOneGiB(t *testing.T) {
+	engine := &sessionEngine{fakeEngine: newFakeEngine(3, 10)}
+	err := Run(context.Background(), Options{
+		Input: sparseInput(t, maxReusableMeasurementInputBytes), Parts: 2, OutputDir: t.TempDir(),
+	}, testDependencies(engine))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if engine.sessionOpens != 1 || engine.sessionMeasures == 0 || engine.sessionCloses != 1 {
+		t.Fatalf("session opens=%d measures=%d closes=%d", engine.sessionOpens, engine.sessionMeasures, engine.sessionCloses)
+	}
+	for path := range engine.outputs {
+		if strings.Contains(path, "pdf-split-measure-") {
+			t.Fatalf("reusable session created measurement candidate %q", path)
+		}
+	}
+}
+
+func TestRunSkipsSessionAboveOneGiB(t *testing.T) {
+	engine := &sessionEngine{fakeEngine: newFakeEngine(3, 10)}
+	err := Run(context.Background(), Options{
+		Input: sparseInput(t, maxReusableMeasurementInputBytes+1), Parts: 2, OutputDir: t.TempDir(),
+	}, testDependencies(engine))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if engine.sessionOpens != 0 {
+		t.Fatalf("session opens = %d, want 0", engine.sessionOpens)
+	}
+}
+
+func TestRunFallsBackWhenSessionIsUnsupported(t *testing.T) {
+	engine := &sessionEngine{fakeEngine: newFakeEngine(3, 10), sessionOpenErr: pdf.ErrMeasurementSessionUnsupported}
+	err := Run(context.Background(), Options{
+		Input: sparseInput(t, 1), Parts: 2, OutputDir: t.TempDir(),
+	}, testDependencies(engine))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if engine.sessionOpens != 1 || engine.sessionMeasures != 0 {
+		t.Fatalf("session opens=%d measures=%d", engine.sessionOpens, engine.sessionMeasures)
+	}
+}
+
+func TestRunStopsOnUnexpectedSessionOpenFailure(t *testing.T) {
+	wantErr := errors.New("open failed")
+	engine := &sessionEngine{fakeEngine: newFakeEngine(3, 10), sessionOpenErr: wantErr}
+	err := Run(context.Background(), Options{
+		Input: sparseInput(t, 1), Parts: 2, OutputDir: t.TempDir(),
+	}, testDependencies(engine))
+	if !errors.Is(err, wantErr) || ExitCode(err) != 5 {
+		t.Fatalf("Run() error = %v, code = %d; want %v and code 5", err, ExitCode(err), wantErr)
+	}
+}
+
+func TestRunClosesSessionAfterPlanningFailure(t *testing.T) {
+	wantErr := errors.New("measure failed")
+	engine := &sessionEngine{fakeEngine: newFakeEngine(3, 10), sessionMeasureErr: wantErr}
+	err := Run(context.Background(), Options{
+		Input: sparseInput(t, 1), Parts: 2, OutputDir: t.TempDir(),
+	}, testDependencies(engine))
+	if !errors.Is(err, wantErr) || engine.sessionCloses != 1 {
+		t.Fatalf("Run() error=%v closes=%d", err, engine.sessionCloses)
+	}
+}
+
+func TestRunClosesSessionAfterPlanningCancellation(t *testing.T) {
+	engine := &sessionEngine{fakeEngine: newFakeEngine(3, 10), sessionMeasureErr: context.Canceled}
+	err := Run(context.Background(), Options{
+		Input: sparseInput(t, 1), Parts: 2, OutputDir: t.TempDir(),
+	}, testDependencies(engine))
+	if !errors.Is(err, context.Canceled) || ExitCode(err) != 8 || engine.sessionCloses != 1 {
+		t.Fatalf("Run() error=%v code=%d closes=%d", err, ExitCode(err), engine.sessionCloses)
+	}
+}
+
+func TestRunReturnsSessionCloseErrorAfterSuccessfulPlanning(t *testing.T) {
+	wantErr := errors.New("close failed")
+	engine := &sessionEngine{fakeEngine: newFakeEngine(3, 10), sessionCloseErr: wantErr}
+	err := Run(context.Background(), Options{
+		Input: sparseInput(t, 1), Parts: 2, OutputDir: t.TempDir(),
+	}, testDependencies(engine))
+	if !errors.Is(err, wantErr) || ExitCode(err) != 5 {
+		t.Fatalf("Run() error = %v, code = %d; want %v and code 5", err, ExitCode(err), wantErr)
+	}
+}
+
+func TestRunKeepsPlanningErrorWhenSessionCloseAlsoFails(t *testing.T) {
+	planErr := errors.New("measure failed")
+	closeErr := errors.New("close failed")
+	engine := &sessionEngine{fakeEngine: newFakeEngine(3, 10), sessionMeasureErr: planErr, sessionCloseErr: closeErr}
+	err := Run(context.Background(), Options{
+		Input: sparseInput(t, 1), Parts: 2, OutputDir: t.TempDir(),
+	}, testDependencies(engine))
+	if !errors.Is(err, planErr) || errors.Is(err, closeErr) {
+		t.Fatalf("Run() error = %v, want only planning error %v", err, planErr)
+	}
+	if engine.sessionCloses != 1 {
+		t.Fatalf("session closes = %d, want 1", engine.sessionCloses)
+	}
+}
+
+func TestRunClassifiesSessionInputStatFailureAsInputError(t *testing.T) {
+	engine := &sessionEngine{fakeEngine: newFakeEngine(3, 10)}
+	err := Run(context.Background(), Options{
+		Input: filepath.Join(t.TempDir(), "missing.pdf"), Parts: 2, OutputDir: t.TempDir(),
+	}, testDependencies(engine))
+	if ExitCode(err) != 3 {
+		t.Fatalf("Run() error = %v, code = %d; want input error code 3", err, ExitCode(err))
+	}
+	if engine.sessionOpens != 0 {
+		t.Fatalf("session opens = %d, want 0", engine.sessionOpens)
+	}
+}
+
+func TestRunReplansWhenSessionPlanningReferenceUnderestimatesFinalSize(t *testing.T) {
+	initial := domain.PageRange{Start: 1, End: 4}
+	engine := &sessionEngine{
+		fakeEngine:   newFakeEngine(4, 10),
+		sessionSizes: map[domain.PageRange]int64{initial: 40},
+	}
+	engine.finalSizes[initial] = 200
+
+	err := Run(context.Background(), Options{
+		Input: sparseInput(t, 1), MaxSize: 100, OutputDir: t.TempDir(),
+	}, testDependencies(engine))
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !containsRange(engine.publishedRanges(), domain.PageRange{Start: 1, End: 2}) ||
+		!containsRange(engine.publishedRanges(), domain.PageRange{Start: 3, End: 4}) {
+		t.Fatalf("published ranges = %#v, want final verification replan", engine.publishedRanges())
+	}
+}
+
+type fakeMeasurementSession struct {
+	engine *sessionEngine
+}
+
+func (s *fakeMeasurementSession) MeasureRange(pageRange domain.PageRange) (int64, error) {
+	s.engine.sessionMeasures++
+	if s.engine.sessionMeasureErr != nil {
+		return 0, s.engine.sessionMeasureErr
+	}
+	if size := s.engine.sessionSizes[pageRange]; size > 0 {
+		return size, nil
+	}
+	return s.engine.fakeEngine.rangeSize(pageRange), nil
+}
+
+func (s *fakeMeasurementSession) Close() error {
+	s.engine.sessionCloses++
+	return s.engine.sessionCloseErr
+}
+
+type sessionEngine struct {
+	*fakeEngine
+	sessionOpenErr    error
+	sessionMeasureErr error
+	sessionCloseErr   error
+	sessionSizes      map[domain.PageRange]int64
+	sessionOpens      int
+	sessionMeasures   int
+	sessionCloses     int
+}
+
+func (e *sessionEngine) OpenMeasurementSession(string) (pdf.MeasurementSession, error) {
+	e.sessionOpens++
+	if e.sessionOpenErr != nil {
+		return nil, e.sessionOpenErr
+	}
+	if e.sessionSizes == nil {
+		e.sessionSizes = make(map[domain.PageRange]int64)
+	}
+	return &fakeMeasurementSession{engine: e}, nil
+}
+
 type fakeEngine struct {
 	pages      int
 	perPage    int64
@@ -217,33 +394,27 @@ func (e *fakeEngine) Inspect(path string) (pdf.Info, error) {
 	return pdf.Info{Pages: e.pages}, nil
 }
 
-func (e *fakeEngine) InputSize(string) (int64, error) {
-	var size int64
-	if len(e.weights) > 0 {
-		for _, weight := range e.weights {
-			size += weight
-		}
-		return size, nil
+func (e *fakeEngine) rangeSize(pageRange domain.PageRange) int64 {
+	size := e.sizes[pageRange]
+	if size != 0 {
+		return size
 	}
-	return int64(e.pages) * e.perPage, nil
+	if len(e.weights) > 0 {
+		for page := pageRange.Start; page <= pageRange.End; page++ {
+			size += e.weights[page-1]
+		}
+		return size
+	}
+	return int64(pageRange.Pages()) * e.perPage
 }
 
 func (e *fakeEngine) WriteRange(_ string, outputPath string, pageRange domain.PageRange) error {
 	if e.writeErr != nil {
 		return e.writeErr
 	}
-	size := e.sizes[pageRange]
+	size := e.rangeSize(pageRange)
 	if finalSize := e.finalSizes[pageRange]; finalSize > 0 && !strings.Contains(outputPath, "pdf-split-measure-") {
 		size = finalSize
-	}
-	if size == 0 {
-		if len(e.weights) > 0 {
-			for page := pageRange.Start; page <= pageRange.End; page++ {
-				size += e.weights[page-1]
-			}
-		} else {
-			size = int64(pageRange.Pages()) * e.perPage
-		}
 	}
 	if err := os.WriteFile(outputPath, make([]byte, size), 0o600); err != nil {
 		return err
@@ -270,6 +441,23 @@ func containsRange(ranges []domain.PageRange, target domain.PageRange) bool {
 		}
 	}
 	return false
+}
+
+func sparseInput(t *testing.T, size int64) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "input.pdf")
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Truncate(size); err != nil {
+		file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 func testDependencies(engine pdf.Engine) Dependencies {
